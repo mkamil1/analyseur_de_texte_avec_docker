@@ -26,9 +26,13 @@ const initDb = async (retries = 5) => {
                     username VARCHAR(50) UNIQUE NOT NULL,
                     email VARCHAR(100) UNIQUE NOT NULL,
                     password VARCHAR(255) NOT NULL,
+                    role VARCHAR(20) DEFAULT 'user',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             `);
+
+            // Ensure role column exists on older installations
+            await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20) DEFAULT 'user';`);
 
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS history (
@@ -57,16 +61,18 @@ initDb();
 
 // INSCRIPTION
 app.post('/api/register', async (req, res) => {
-    const { username, email, password } = req.body;
+    const { username, email, password, adminCode } = req.body;
     if (!username || !email || !password) {
         return res.status(400).json({ error: 'Tous les champs (nom, email, mot de passe) sont requis.' });
     }
 
+    const role = (adminCode && process.env.ADMIN_CODE && adminCode === process.env.ADMIN_CODE) ? 'admin' : 'user';
+
     try {
         const hashedPassword = await bcrypt.hash(password, 10);
         const result = await pool.query(
-            'INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING id, username, email',
-            [username, email, hashedPassword]
+            'INSERT INTO users (username, email, password, role) VALUES ($1, $2, $3, $4) RETURNING id, username, email, role',
+            [username, email, hashedPassword, role]
         );
         res.status(201).json({ message: 'Compte créé avec succès !', user: result.rows[0] });
     } catch (err) {
@@ -102,7 +108,7 @@ app.post('/api/login', async (req, res) => {
 
         res.json({
             message: 'Connexion réussie',
-            user: { id: user.id, username: user.username, email: user.email }
+            user: { id: user.id, username: user.username, email: user.email, role: user.role }
         });
     } catch (err) {
         res.status(500).json({ error: 'Erreur serveur lors de la connexion.' });
@@ -133,18 +139,99 @@ app.post('/api/analyze', async (req, res) => {
     }
 });
 
-// OBTENIR L'HISTORIQUE DE L'UTILISATEUR
+// Helper: check if requester is admin
+const isAdmin = async (requesterId) => {
+    if (!requesterId) return false;
+    try {
+        const q = await pool.query('SELECT role FROM users WHERE id = $1', [requesterId]);
+        return q.rows.length > 0 && q.rows[0].role === 'admin';
+    } catch (e) {
+        return false;
+    }
+};
+
+// OBTENIR L'HISTORIQUE DE L'UTILISATEUR (accessible par le propriétaire ou un admin)
 app.get('/api/history/:userId', async (req, res) => {
     const { userId } = req.params;
+    const requesterId = req.query.requesterId;
 
     try {
+        const allowed = (parseInt(requesterId) === parseInt(userId)) || await isAdmin(requesterId);
+        if (!allowed) return res.status(403).json({ error: 'Accès refusé.' });
+
         const history = await pool.query(
-            'SELECT id, text, word_count, char_count, vowel_count, created_at FROM history WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20',
+            'SELECT id, user_id, text, word_count, char_count, vowel_count, created_at FROM history WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100',
             [userId]
         );
         res.json(history.rows);
     } catch (err) {
+        console.error(err);
         res.status(500).json({ error: 'Erreur lors de la récupération de l historique.' });
+    }
+});
+
+// List users (admin only)
+app.get('/api/users', async (req, res) => {
+    const requesterId = req.query.requesterId;
+    try {
+        if (!await isAdmin(requesterId)) return res.status(403).json({ error: 'Accès refusé.' });
+        const users = await pool.query('SELECT id, username, email, role FROM users ORDER BY username');
+        res.json(users.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Erreur lors de la récupération des utilisateurs.' });
+    }
+});
+
+// Update a history entry (owner or admin)
+app.put('/api/history/:id', async (req, res) => {
+    const { id } = req.params;
+    const { text, requesterId } = req.body;
+
+    if (!requesterId) return res.status(401).json({ error: 'Requester id required.' });
+
+    try {
+        const row = await pool.query('SELECT user_id FROM history WHERE id = $1', [id]);
+        if (row.rows.length === 0) return res.status(404).json({ error: 'Entrée introuvable.' });
+        const ownerId = row.rows[0].user_id;
+        const allowed = (parseInt(ownerId) === parseInt(requesterId)) || await isAdmin(requesterId);
+        if (!allowed) return res.status(403).json({ error: 'Accès refusé.' });
+
+        const charCount = text.length;
+        const wordCount = text.trim() === '' ? 0 : text.trim().split(/\s+/).length;
+        const vowelCount = (text.match(/[aeiouyàâéèêëîïôûùüÿæœ]/gi) || []).length;
+
+        await pool.query(
+            'UPDATE history SET text = $1, word_count = $2, char_count = $3, vowel_count = $4 WHERE id = $5',
+            [text, wordCount, charCount, vowelCount, id]
+        );
+
+        res.json({ id, text, word_count: wordCount, char_count: charCount, vowel_count: vowelCount });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Erreur lors de la mise à jour de l historique.' });
+    }
+});
+
+// Delete a history entry (owner or admin)
+app.delete('/api/history/:id', async (req, res) => {
+    const { id } = req.params;
+    const requesterId = req.query.requesterId;
+
+    if (!requesterId) return res.status(401).json({ error: 'Requester id required.' });
+
+    try {
+        const row = await pool.query('SELECT user_id FROM history WHERE id = $1', [id]);
+        if (row.rows.length === 0) return res.status(404).json({ error: 'Entrée introuvable.' });
+        const ownerId = row.rows[0].user_id;
+        const allowed = (parseInt(ownerId) === parseInt(requesterId)) || await isAdmin(requesterId);
+        if (!allowed) return res.status(403).json({ error: 'Accès refusé.' });
+
+        await pool.query('DELETE FROM history WHERE id = $1', [id]);
+        res.json({ message: 'Supprimé.' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Erreur lors de la suppression de l historique.' });
     }
 });
 

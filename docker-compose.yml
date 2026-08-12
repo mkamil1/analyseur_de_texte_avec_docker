@@ -30,6 +30,7 @@ services:
       DB_USER: postgres
       DB_PASSWORD: mysecretpassword
       DB_NAME: text_analyzer
+      ADMIN_CODE: admin_secret_123
     depends_on:
       - db
 

@@ -15,6 +15,12 @@
                 <input type="text" id="username" placeholder="Nom d'utilisateur" autocomplete="off">
                 <input type="email" id="email" placeholder="Email (requis pour l'inscription)" autocomplete="off">
                 <input type="password" id="password" placeholder="Mot de passe" autocomplete="off">
+            <div style="display: flex; flex-direction: column-reverse; align-items: center; gap: 0.5rem; margin: 0.5rem 0;">
+                <input type="checkbox" id="admin-checkbox">
+                <label id="admin-checkbox-label" for="admin-checkbox" style="margin: 0; text-align: center;">S'inscrire en tant qu'admin</label>
+            </div>
+
+                <input type="text" id="admin-code" placeholder="Code admin" autocomplete="off" style="display:none; margin-top:0.5rem;">
                 <button id="login-btn">Se connecter</button>
                 <button id="register-btn" class="btn-secondary">S'inscrire</button>
             </div>
@@ -51,6 +57,10 @@
 
             <div class="history-section">
                 <h2>Mon Historique</h2>
+                <div id="admin-controls" style="display:none; margin-bottom:1rem;">
+                    <label for="user-select">Voir l'historique de :</label>
+                    <select id="user-select"></select>
+                </div>
                 <div id="history-list"></div>
             </div>
         </div>
@@ -109,9 +119,15 @@
                 authSection.style.display = 'none';
                 appSection.style.display = 'block';
                 userDisplay.textContent = currentUser.username;
-                emailDisplay.textContent = currentUser.email;
+                emailDisplay.textContent = currentUser.email + (currentUser.role ? (' — ' + currentUser.role) : '');
                 clearAnalysis();
-                loadHistory();
+                if (currentUser.role === 'admin') {
+                    document.getElementById('admin-controls').style.display = 'block';
+                    loadUsers();
+                } else {
+                    document.getElementById('admin-controls').style.display = 'none';
+                    loadHistory(currentUser.id);
+                }
             } else {
                 authSection.style.display = 'block';
                 appSection.style.display = 'none';
@@ -124,12 +140,14 @@
             const username = document.getElementById('username').value;
             const email = document.getElementById('email').value;
             const password = document.getElementById('password').value;
+            const adminCheckbox = document.getElementById('admin-checkbox');
+            const adminCode = adminCheckbox.checked ? document.getElementById('admin-code').value : '';
             clearAnalysis();
 
             const res = await fetch(`${API_URL}/register`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, email, password })
+                body: JSON.stringify({ username, email, password, adminCode })
             });
             const data = await res.json();
             if (res.ok) {
@@ -157,8 +175,7 @@
             if (res.ok) {
                 currentUser = data.user;
                 localStorage.setItem('user', JSON.stringify(currentUser));
-                // Force a full reload to ensure no stale UI/data remains between users
-                location.reload();
+                updateUI();
             } else {
                 alert(data.error);
             }
@@ -168,8 +185,7 @@
         document.getElementById('logout-btn').addEventListener('click', () => {
             currentUser = null;
             localStorage.removeItem('user');
-            // Reload to fully clear UI and state
-            location.reload();
+            updateUI();
         });
 
         // Reset counters automatically when textarea becomes empty
@@ -189,6 +205,12 @@
 
         document.getElementById('text-input').addEventListener('input', () => {
             setAnalyzeButtonState();
+        });
+
+        const adminCheckbox = document.getElementById('admin-checkbox');
+        const adminCodeInput = document.getElementById('admin-code');
+        adminCheckbox.addEventListener('change', () => {
+            adminCodeInput.style.display = adminCheckbox.checked ? 'block' : 'none';
         });
 
         // Initialize analyze button state on load
@@ -214,26 +236,93 @@
                 document.getElementById('chars').textContent = data.characters;
                 document.getElementById('vowels').textContent = data.vowels;
 
-                loadHistory();
+                if (currentUser.role === 'admin') {
+                    const sel = document.getElementById('user-select');
+                    const userId = (sel && sel.value) ? sel.value : currentUser.id;
+                    loadHistory(userId);
+                } else {
+                    loadHistory(currentUser.id);
+                }
             } catch (error) {
                 alert("Erreur de communication avec le serveur.");
             }
         });
 
        
-        async function loadHistory() {
+        async function loadUsers() {
+            try {
+                const res = await fetch(`${API_URL}/users?requesterId=${currentUser.id}`);
+                if (!res.ok) return;
+                const users = await res.json();
+                const sel = document.getElementById('user-select');
+                sel.innerHTML = users.map(u => `<option value="${u.id}">${u.username} (${u.email})</option>`).join('');
+                sel.addEventListener('change', () => {
+                    loadHistory(sel.value);
+                });
+                if (users.length > 0) loadHistory(users[0].id);
+            } catch (err) {
+                console.error('Erreur users', err);
+            }
+        }
+
+        async function loadHistory(userId) {
             try {
                 const historyList = document.getElementById('history-list');
                 historyList.innerHTML = '';
-                const res = await fetch(`${API_URL}/history/${currentUser.id}`);
+                const res = await fetch(`${API_URL}/history/${userId}?requesterId=${currentUser.id}`);
+                if (!res.ok) {
+                    historyList.innerHTML = '<p>Impossible de charger l\'historique.</p>';
+                    return;
+                }
                 const history = await res.json();
-                historyList.innerHTML = history.map(item => `
-                    <div class="history-item">
+
+                historyList.innerHTML = history.map(item => {
+                    const canEdit = (currentUser.role === 'admin') || (currentUser.id === item.user_id);
+                    return `
+                    <div class="history-item" data-id="${item.id}">
                         <strong>"${item.text.length > 40 ? item.text.substring(0, 40) + '...' : item.text}"</strong>
                         <br>📊 Mots: ${item.word_count} | Caractères: ${item.char_count} | Voyelles: ${item.vowel_count}
                         <small>📅 ${new Date(item.created_at).toLocaleString('fr-FR')}</small>
+                        ${canEdit ? `<div style="margin-top:0.5rem;">
+                            <button class="edit-btn" data-id="${item.id}">Modifier</button>
+                            <button class="delete-btn" data-id="${item.id}">Supprimer</button>
+                        </div>` : ''}
                     </div>
-                `).join('');
+                `}).join('');
+
+                // attach handlers
+                document.querySelectorAll('.edit-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        const id = e.target.dataset.id;
+                        const parent = e.target.closest('.history-item');
+                        const strong = parent.querySelector('strong');
+                        const currentText = strong ? strong.textContent.replace(/^"|"$/g, '') : '';
+                        const newText = prompt('Modifier le texte', currentText) || '';
+                        if (newText.trim() === '') return;
+                        try {
+                            const resp = await fetch(`${API_URL}/history/${id}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ text: newText, requesterId: currentUser.id })
+                            });
+                            if (resp.ok) loadHistory(userId);
+                            else alert('Échec mise à jour');
+                        } catch (err) { console.error(err); alert('Erreur'); }
+                    });
+                });
+
+                document.querySelectorAll('.delete-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        const id = e.target.dataset.id;
+                        if (!confirm('Supprimer cette entrée ?')) return;
+                        try {
+                            const resp = await fetch(`${API_URL}/history/${id}?requesterId=${currentUser.id}`, { method: 'DELETE' });
+                            if (resp.ok) loadHistory(userId);
+                            else alert('Échec suppression');
+                        } catch (err) { console.error(err); alert('Erreur'); }
+                    });
+                });
+
             } catch (err) {
                 console.error("Erreur d'historique", err);
             }
