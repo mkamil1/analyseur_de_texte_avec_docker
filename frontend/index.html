@@ -114,6 +114,17 @@
             setAnalyzeButtonState();
         }
 
+        function clearAuthFields() {
+            if (usernameInput) usernameInput.value = '';
+            if (emailInput) emailInput.value = '';
+            if (passwordInput) passwordInput.value = '';
+            if (adminCheckbox) adminCheckbox.checked = false;
+            if (adminCodeInput) {
+                adminCodeInput.value = '';
+                adminCodeInput.style.display = 'none';
+            }
+        }
+
         function updateUI() {
             if (currentUser) {
                 authSection.style.display = 'none';
@@ -131,6 +142,7 @@
             } else {
                 authSection.style.display = 'block';
                 appSection.style.display = 'none';
+                clearAuthFields();
                 clearAnalysis();
             }
         }
@@ -185,6 +197,7 @@
         document.getElementById('logout-btn').addEventListener('click', () => {
             currentUser = null;
             localStorage.removeItem('user');
+            clearAuthFields();
             updateUI();
         });
 
