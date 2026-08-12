@@ -12,9 +12,9 @@
         <div id="auth-section">
             <h1>Authentification</h1>
             <div class="auth-box">
-                <input type="text" id="username" placeholder="Nom d'utilisateur">
-                <input type="email" id="email" placeholder="Email (requis pour l'inscription)">
-                <input type="password" id="password" placeholder="Mot de passe">
+                <input type="text" id="username" placeholder="Nom d'utilisateur" autocomplete="off">
+                <input type="email" id="email" placeholder="Email (requis pour l'inscription)" autocomplete="off">
+                <input type="password" id="password" placeholder="Mot de passe" autocomplete="off">
                 <button id="login-btn">Se connecter</button>
                 <button id="register-btn" class="btn-secondary">S'inscrire</button>
             </div>
@@ -31,7 +31,7 @@
             </div>
 
             <h1>Analyseur de Texte</h1>
-            <textarea id="text-input" placeholder="Saisissez ou collez votre texte ici..."></textarea>
+            <textarea id="text-input" placeholder="Saisissez ou collez votre texte ici..." autocomplete="off"></textarea>
             <button id="analyze-btn">Analyser le texte</button>
 
             <div class="results">
@@ -65,12 +65,43 @@
         const userDisplay = document.getElementById('user-display');
         const emailDisplay = document.getElementById('email-display');
 
-        function clearAnalysis() {
-            document.getElementById('text-input').value = '';
+        // Force-clear inputs on load to avoid browser form restoration of previous user's text
+        const usernameInput = document.getElementById('username');
+        const emailInput = document.getElementById('email');
+        const passwordInput = document.getElementById('password');
+        const textInput = document.getElementById('text-input');
+        if (usernameInput) usernameInput.value = '';
+        if (emailInput) emailInput.value = '';
+        if (passwordInput) passwordInput.value = '';
+        if (textInput) textInput.value = '';
+
+        // Handle page restore (bfcache) and other cases where browser restores form values
+        window.addEventListener('pageshow', (event) => {
+            try {
+                if (usernameInput) usernameInput.value = '';
+                if (emailInput) emailInput.value = '';
+                if (passwordInput) passwordInput.value = '';
+                if (textInput) textInput.value = '';
+                resetCounters();
+                setAnalyzeButtonState();
+                const historyList = document.getElementById('history-list');
+                if (historyList) historyList.innerHTML = '';
+            } catch (e) {
+                console.error('pageshow cleanup failed', e);
+            }
+        });
+
+        function resetCounters() {
             document.getElementById('words').textContent = '0';
             document.getElementById('chars').textContent = '0';
             document.getElementById('vowels').textContent = '0';
+        }
+
+        function clearAnalysis() {
+            document.getElementById('text-input').value = '';
+            resetCounters();
             document.getElementById('history-list').innerHTML = '';
+            setAnalyzeButtonState();
         }
 
         function updateUI() {
@@ -93,6 +124,7 @@
             const username = document.getElementById('username').value;
             const email = document.getElementById('email').value;
             const password = document.getElementById('password').value;
+            clearAnalysis();
 
             const res = await fetch(`${API_URL}/register`, {
                 method: 'POST',
@@ -102,6 +134,9 @@
             const data = await res.json();
             if (res.ok) {
                 alert('Compte créé avec succès ! Vous pouvez à présent vous connecter.');
+                document.getElementById('username').value = '';
+                document.getElementById('email').value = '';
+                document.getElementById('password').value = '';
             } else {
                 alert(data.error);
             }
@@ -111,6 +146,7 @@
         document.getElementById('login-btn').addEventListener('click', async () => {
             const identifier = document.getElementById('username').value || document.getElementById('email').value;
             const password = document.getElementById('password').value;
+            clearAnalysis();
 
             const res = await fetch(`${API_URL}/login`, {
                 method: 'POST',
@@ -121,7 +157,8 @@
             if (res.ok) {
                 currentUser = data.user;
                 localStorage.setItem('user', JSON.stringify(currentUser));
-                updateUI();
+                // Force a full reload to ensure no stale UI/data remains between users
+                location.reload();
             } else {
                 alert(data.error);
             }
@@ -131,13 +168,39 @@
         document.getElementById('logout-btn').addEventListener('click', () => {
             currentUser = null;
             localStorage.removeItem('user');
-            updateUI();
+            // Reload to fully clear UI and state
+            location.reload();
         });
+
+        // Reset counters automatically when textarea becomes empty
+        document.getElementById('text-input').addEventListener('input', (e) => {
+            const value = e.target.value || '';
+            if (value.trim() === '') {
+                resetCounters();
+            }
+        });
+
+        // Enable/disable analyze button based on textarea content
+        function setAnalyzeButtonState() {
+            const btn = document.getElementById('analyze-btn');
+            const value = document.getElementById('text-input').value || '';
+            btn.disabled = value.trim() === '';
+        }
+
+        document.getElementById('text-input').addEventListener('input', () => {
+            setAnalyzeButtonState();
+        });
+
+        // Initialize analyze button state on load
+        setAnalyzeButtonState();
 
         // Action Analyse de texte
         document.getElementById('analyze-btn').addEventListener('click', async () => {
             const text = document.getElementById('text-input').value;
-            if (!text.trim()) return;
+            if (!text.trim()) {
+                resetCounters();
+                return;
+            }
 
             try {
                 const response = await fetch(`${API_URL}/analyze`, {
@@ -160,10 +223,10 @@
        
         async function loadHistory() {
             try {
+                const historyList = document.getElementById('history-list');
+                historyList.innerHTML = '';
                 const res = await fetch(`${API_URL}/history/${currentUser.id}`);
                 const history = await res.json();
-
-                const historyList = document.getElementById('history-list');
                 historyList.innerHTML = history.map(item => `
                     <div class="history-item">
                         <strong>"${item.text.length > 40 ? item.text.substring(0, 40) + '...' : item.text}"</strong>
