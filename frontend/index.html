@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analyseur de Texte Docker</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+      
+        <div id="auth-section">
+            <h1>Authentification</h1>
+            <div class="auth-box">
+                <input type="text" id="username" placeholder="Nom d'utilisateur">
+                <input type="email" id="email" placeholder="Email (requis pour l'inscription)">
+                <input type="password" id="password" placeholder="Mot de passe">
+                <button id="login-btn">Se connecter</button>
+                <button id="register-btn" class="btn-secondary">S'inscrire</button>
+            </div>
+        </div>
+
+        <!-- Module Espace Utilisateur -->
+        <div id="app-section" style="display: none;">
+            <div class="user-header">
+                <div>
+                    <strong id="user-display"></strong><br>
+                    <small id="email-display" style="color: #64748b;"></small>
+                </div>
+                <button id="logout-btn" class="btn-secondary" style="width: auto; margin: 0; padding: 0.4rem 0.8rem;">Déconnexion</button>
+            </div>
+
+            <h1>Analyseur de Texte</h1>
+            <textarea id="text-input" placeholder="Saisissez ou collez votre texte ici..."></textarea>
+            <button id="analyze-btn">Analyser le texte</button>
+
+            <div class="results">
+                <div class="stat-box">
+                    <span class="stat-number" id="words">0</span>
+                    <span class="stat-label">Mots</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-number" id="chars">0</span>
+                    <span class="stat-label">Caractères</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-number" id="vowels">0</span>
+                    <span class="stat-label">Voyelles</span>
+                </div>
+            </div>
+
+            <div class="history-section">
+                <h2>Mon Historique</h2>
+                <div id="history-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5001/api';
+        let currentUser = JSON.parse(localStorage.getItem('user')) || null;
+
+        const authSection = document.getElementById('auth-section');
+        const appSection = document.getElementById('app-section');
+        const userDisplay = document.getElementById('user-display');
+        const emailDisplay = document.getElementById('email-display');
+
+        function clearAnalysis() {
+            document.getElementById('text-input').value = '';
+            document.getElementById('words').textContent = '0';
+            document.getElementById('chars').textContent = '0';
+            document.getElementById('vowels').textContent = '0';
+            document.getElementById('history-list').innerHTML = '';
+        }
+
+        function updateUI() {
+            if (currentUser) {
+                authSection.style.display = 'none';
+                appSection.style.display = 'block';
+                userDisplay.textContent = currentUser.username;
+                emailDisplay.textContent = currentUser.email;
+                clearAnalysis();
+                loadHistory();
+            } else {
+                authSection.style.display = 'block';
+                appSection.style.display = 'none';
+                clearAnalysis();
+            }
+        }
+
+        // Action Inscription
+        document.getElementById('register-btn').addEventListener('click', async () => {
+            const username = document.getElementById('username').value;
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            const res = await fetch(`${API_URL}/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, email, password })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                alert('Compte créé avec succès ! Vous pouvez à présent vous connecter.');
+            } else {
+                alert(data.error);
+            }
+        });
+
+        // Action Connexion
+        document.getElementById('login-btn').addEventListener('click', async () => {
+            const identifier = document.getElementById('username').value || document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            const res = await fetch(`${API_URL}/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ identifier, password })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                currentUser = data.user;
+                localStorage.setItem('user', JSON.stringify(currentUser));
+                updateUI();
+            } else {
+                alert(data.error);
+            }
+        });
+
+        // Action Déconnexion
+        document.getElementById('logout-btn').addEventListener('click', () => {
+            currentUser = null;
+            localStorage.removeItem('user');
+            updateUI();
+        });
+
+        // Action Analyse de texte
+        document.getElementById('analyze-btn').addEventListener('click', async () => {
+            const text = document.getElementById('text-input').value;
+            if (!text.trim()) return;
+
+            try {
+                const response = await fetch(`${API_URL}/analyze`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text, user_id: currentUser.id })
+                });
+
+                const data = await response.json();
+                document.getElementById('words').textContent = data.words;
+                document.getElementById('chars').textContent = data.characters;
+                document.getElementById('vowels').textContent = data.vowels;
+
+                loadHistory();
+            } catch (error) {
+                alert("Erreur de communication avec le serveur.");
+            }
+        });
+
+       
+        async function loadHistory() {
+            try {
+                const res = await fetch(`${API_URL}/history/${currentUser.id}`);
+                const history = await res.json();
+
+                const historyList = document.getElementById('history-list');
+                historyList.innerHTML = history.map(item => `
+                    <div class="history-item">
+                        <strong>"${item.text.length > 40 ? item.text.substring(0, 40) + '...' : item.text}"</strong>
+                        <br>📊 Mots: ${item.word_count} | Caractères: ${item.char_count} | Voyelles: ${item.vowel_count}
+                        <small>📅 ${new Date(item.created_at).toLocaleString('fr-FR')}</small>
+                    </div>
+                `).join('');
+            } catch (err) {
+                console.error("Erreur d'historique", err);
+            }
+        }
+
+        updateUI();
+    </script>
+</body>
+</html>
