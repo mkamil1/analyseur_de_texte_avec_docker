@@ -59,6 +59,16 @@ const initDb = async (retries = 5) => {
 
 initDb();
 
+const isAdmin = async (userId) => {
+    if (!userId) return false;
+    try {
+        const res = await pool.query('SELECT role FROM users WHERE id = $1', [userId]);
+        return res.rows.length > 0 && res.rows[0].role === 'admin';
+    } catch {
+        return false;
+    }
+};
+
 // INSCRIPTION
 app.post('/api/register', async (req, res) => {
     const { username, email, password, adminCode } = req.body;
@@ -115,12 +125,12 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-
+// ANALYSE DE TEXTE
 app.post('/api/analyze', async (req, res) => {
     const { text = '', user_id } = req.body;
 
     if (!user_id) {
-        return res.status(401).json({ error: 'Vous devez être connecté pour effectuer une analyse.' });
+        return res.status(400).json({ error: 'Utilisateur non identifié.' });
     }
 
     const charCount = text.length;
@@ -139,24 +149,13 @@ app.post('/api/analyze', async (req, res) => {
     }
 });
 
-// Helper: check if requester is admin
-const isAdmin = async (requesterId) => {
-    if (!requesterId) return false;
-    try {
-        const q = await pool.query('SELECT role FROM users WHERE id = $1', [requesterId]);
-        return q.rows.length > 0 && q.rows[0].role === 'admin';
-    } catch (e) {
-        return false;
-    }
-};
-
-// OBTENIR L'HISTORIQUE DE L'UTILISATEUR (accessible par le propriétaire ou un admin)
+// HISTORIQUE
 app.get('/api/history/:userId', async (req, res) => {
     const { userId } = req.params;
     const requesterId = req.query.requesterId;
 
     try {
-        const allowed = (parseInt(requesterId) === parseInt(userId)) || await isAdmin(requesterId);
+        const allowed = (parseInt(requesterId) === parseInt(userId)) || (await isAdmin(requesterId));
         if (!allowed) return res.status(403).json({ error: 'Accès refusé.' });
 
         const history = await pool.query(
@@ -170,11 +169,14 @@ app.get('/api/history/:userId', async (req, res) => {
     }
 });
 
-// List users (admin only)
+// UTILISATEURS (ADMIN)
 app.get('/api/users', async (req, res) => {
     const requesterId = req.query.requesterId;
+    if (!(await isAdmin(requesterId))) {
+        return res.status(403).json({ error: 'Accès refusé. Réservé aux administrateurs.' });
+    }
+
     try {
-        if (!await isAdmin(requesterId)) return res.status(403).json({ error: 'Accès refusé.' });
         const users = await pool.query('SELECT id, username, email, role FROM users ORDER BY username');
         res.json(users.rows);
     } catch (err) {
@@ -183,18 +185,17 @@ app.get('/api/users', async (req, res) => {
     }
 });
 
-// Update a history entry (owner or admin)
+// MODIFIER HISTORIQUE
 app.put('/api/history/:id', async (req, res) => {
     const { id } = req.params;
     const { text, requesterId } = req.body;
 
-    if (!requesterId) return res.status(401).json({ error: 'Requester id required.' });
-
     try {
         const row = await pool.query('SELECT user_id FROM history WHERE id = $1', [id]);
         if (row.rows.length === 0) return res.status(404).json({ error: 'Entrée introuvable.' });
+        
         const ownerId = row.rows[0].user_id;
-        const allowed = (parseInt(ownerId) === parseInt(requesterId)) || await isAdmin(requesterId);
+        const allowed = (parseInt(ownerId) === parseInt(requesterId)) || (await isAdmin(requesterId));
         if (!allowed) return res.status(403).json({ error: 'Accès refusé.' });
 
         const charCount = text.length;
@@ -213,18 +214,17 @@ app.put('/api/history/:id', async (req, res) => {
     }
 });
 
-// Delete a history entry (owner or admin)
+// SUPPRIMER HISTORIQUE
 app.delete('/api/history/:id', async (req, res) => {
     const { id } = req.params;
     const requesterId = req.query.requesterId;
 
-    if (!requesterId) return res.status(401).json({ error: 'Requester id required.' });
-
     try {
         const row = await pool.query('SELECT user_id FROM history WHERE id = $1', [id]);
         if (row.rows.length === 0) return res.status(404).json({ error: 'Entrée introuvable.' });
+        
         const ownerId = row.rows[0].user_id;
-        const allowed = (parseInt(ownerId) === parseInt(requesterId)) || await isAdmin(requesterId);
+        const allowed = (parseInt(ownerId) === parseInt(requesterId)) || (await isAdmin(requesterId));
         if (!allowed) return res.status(403).json({ error: 'Accès refusé.' });
 
         await pool.query('DELETE FROM history WHERE id = $1', [id]);

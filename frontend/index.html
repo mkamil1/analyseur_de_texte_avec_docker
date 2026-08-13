@@ -75,17 +75,16 @@
         const userDisplay = document.getElementById('user-display');
         const emailDisplay = document.getElementById('email-display');
 
-        // Force-clear inputs on load to avoid browser form restoration of previous user's text
         const usernameInput = document.getElementById('username');
         const emailInput = document.getElementById('email');
         const passwordInput = document.getElementById('password');
         const textInput = document.getElementById('text-input');
+
         if (usernameInput) usernameInput.value = '';
         if (emailInput) emailInput.value = '';
         if (passwordInput) passwordInput.value = '';
         if (textInput) textInput.value = '';
 
-        // Handle page restore (bfcache) and other cases where browser restores form values
         window.addEventListener('pageshow', (event) => {
             try {
                 if (usernameInput) usernameInput.value = '';
@@ -201,7 +200,6 @@
             updateUI();
         });
 
-        // Reset counters automatically when textarea becomes empty
         document.getElementById('text-input').addEventListener('input', (e) => {
             const value = e.target.value || '';
             if (value.trim() === '') {
@@ -209,7 +207,6 @@
             }
         });
 
-        // Enable/disable analyze button based on textarea content
         function setAnalyzeButtonState() {
             const btn = document.getElementById('analyze-btn');
             const value = document.getElementById('text-input').value || '';
@@ -226,7 +223,6 @@
             adminCodeInput.style.display = adminCheckbox.checked ? 'block' : 'none';
         });
 
-        // Initialize analyze button state on load
         setAnalyzeButtonState();
 
         // Action Analyse de texte
@@ -245,6 +241,11 @@
                 });
 
                 const data = await response.json();
+                if (!response.ok) {
+                    alert(data.error);
+                    return;
+                }
+
                 document.getElementById('words').textContent = data.words;
                 document.getElementById('chars').textContent = data.characters;
                 document.getElementById('vowels').textContent = data.vowels;
@@ -261,7 +262,6 @@
             }
         });
 
-       
         async function loadUsers() {
             try {
                 const res = await fetch(`${API_URL}/users?requesterId=${currentUser.id}`);
@@ -303,7 +303,6 @@
                     </div>
                 `}).join('');
 
-                // attach handlers
                 document.querySelectorAll('.edit-btn').forEach(btn => {
                     btn.addEventListener('click', async (e) => {
                         const id = e.target.dataset.id;
@@ -329,7 +328,9 @@
                         const id = e.target.dataset.id;
                         if (!confirm('Supprimer cette entrée ?')) return;
                         try {
-                            const resp = await fetch(`${API_URL}/history/${id}?requesterId=${currentUser.id}`, { method: 'DELETE' });
+                            const resp = await fetch(`${API_URL}/history/${id}?requesterId=${currentUser.id}`, {
+                                method: 'DELETE'
+                            });
                             if (resp.ok) loadHistory(userId);
                             else alert('Échec suppression');
                         } catch (err) { console.error(err); alert('Erreur'); }
